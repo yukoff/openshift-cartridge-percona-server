@@ -1,44 +1,83 @@
-#!/bin/bash
+#!/bin/bash -ue
 
 source $OPENSHIFT_CARTRIDGE_SDK_BASH
+source "${OPENSHIFT_MYSQL_DIR}/lib/mysql_context"
+
+case "$1" in
+  -v|--version)
+    version="$2"
+esac
+
+# We want to log to stdout, but MySQL will try appending `.err` to any
+# file provided to --log-error. Work around it by symlinking to /dev/stdout.
+#
+# See: http://bugs.mysql.com/bug.php?id=57690
+if [ ! -e $OPENSHIFT_MYSQL_DIR/stdout.err ]; then
+  ln -s /dev/stdout $OPENSHIFT_MYSQL_DIR/stdout.err
+fi
 
 # Download
-curl -L -o ${OPENSHIFT_DATA_DIR}tmp.tgz http://dev.mysql.com/get/Downloads/mysql-${2}-linux-glibc2.5-x86_64.tar.gz
+#https://www.percona.com/downloads/Percona-Server-5.7/Percona-Server-5.7.11-4/binary/tarball/Percona-Server-5.7.11-4-Linux.x86_64.ssl101.tar.gz
+#curl -L -o ${OPENSHIFT_DATA_DIR}tmp.tgz \
+curl -L -o /tmp/percona-server-${version}.tgz \
+  https://www.percona.com/downloads/Percona-Server-5.7/Percona-Server-${version}-4/binary/tarball/Percona-Server-${version}-4-Linux.x86_64.ssl101.tar.gz
 
 # Create bin directory if necessary
 mkdir -p ${OPENSHIFT_DATA_DIR}.mysql
+rm ${OPENSHIFT_DATA_DIR}.mysql/usr
+ln -sf ${OPENSHIFT_DATA_DIR}.mysql/. ${OPENSHIFT_DATA_DIR}.mysql/usr
 
-# Copy just the mecessary files
-tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql mysql-${2}-linux-glibc2.5-x86_64/bin/{mysql,mysqld,mysql_install_db,mysql_ssl_rsa_setup}
-tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql mysql-${2}-linux-glibc2.5-x86_64/share
+# Copy just the necessary files
+#tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+  Percona-Server-${version}-4-Linux.x86_64.ssl101/bin
+  #Percona-Server-${version}-4-Linux.x86_64.ssl101/bin/{mysql,mysqld,mysql_install_db,mysql_ssl_rsa_setup}
+#tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+  Percona-Server-${version}-4-Linux.x86_64.ssl101/lib
+#tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
+    Percona-Server-${version}-4-Linux.x86_64.ssl101/share
 
 # Remove downloaded archive
-rm ${OPENSHIFT_DATA_DIR}tmp.tgz
+#rm ${OPENSHIFT_DATA_DIR}tmp.tgz
+rm /tmp/percona-server-${version}.tgz
 
-echo "
-[mysqld]
-skip-name-resolve
-explicit-defaults-for-timestamp
-port=${OPENSHIFT_MYSQL_DB_PORT}
-socket=${TMP}mysql.sock
-basedir=${OPENSHIFT_DATA_DIR}.mysql
-datadir=${OPENSHIFT_DATA_DIR}.mysql/data
-tmpdir=${TMP}
-pid-file=${TMP}mysql.pid
-log-error=${OPENSHIFT_LOG_DIR}mysql.err
-" > ${OPENSHIFT_DATA_DIR}.mysql/my.cnf
+### config
+
+# Generate username, password, and db name and create env variables
+echo 'Generating username and password'
+
+env_dir="${OPENSHIFT_MYSQL_DIR}/env"
+username=$(generate_username)
+password=$(generate_password)
+
+set_env_var 'OPENSHIFT_MYSQL_DB_USERNAME' "$username" $env_dir
+set_env_var 'OPENSHIFT_MYSQL_DB_PASSWORD' $password $env_dir
+set_env_var 'OPENSHIFT_MYSQL_DB_URL' "mysql://$username:$password@$OPENSHIFT_MYSQL_DB_HOST:$OPENSHIFT_MYSQL_DB_PORT/" $env_dir
+set_env_var 'OPENSHIFT_MYSQL_VERSION' $version $env_dir
+
+echo 'Installing mysqld'
+
+mysql_data_dir="${OPENSHIFT_MYSQL_DIR}/data"
+mysql_base_dir="${OPENSHIFT_DATA_DIR}.mysql"
+mysql_lc_dir="${mysql_base_dir}/share"
 
 # Create internal database
-cd ${OPENSHIFT_DATA_DIR}.mysql
-./bin/mysql_install_db \
-  --defaults-file=${OPENSHIFT_DATA_DIR}.mysql/my.cnf \
-  --insecure \
-  --datadir=${OPENSHIFT_DATA_DIR}.mysql/data
+#cd ${OPENSHIFT_DATA_DIR}.mysql
+#./bin/mysql_install_db \
+#  --defaults-file=${OPENSHIFT_DATA_DIR}.mysql/my.cnf \
+#  --insecure \
+#  --datadir=${OPENSHIFT_DATA_DIR}.mysql/data
+
+# Must be invoked with absolute path to avoid a mysql bug involving my_print_defaults
+mysql_context "/usr/bin/mysqld --initialize-insecure --basedir=${mysql_base_dir} --datadir=${mysql_data_dir} --skip-name-resolve &>/tmp/mysql_install_db.log" || error 'Failed to create mysqldb', 119
 
 # Remove temporary tools
 rm ${OPENSHIFT_DATA_DIR}.mysql/bin/{mysql_install_db,mysql_ssl_rsa_setup}
 
 # Add DB_HOST and DB_PORT environment variables
+set +u
 if [ -z "$OPENSHIFT_MYSQL_PROXY_PORT" ]; then
   # Since $OPENSHIFT_MYSQL_PROXY_PORT is missing, cartridge must be running in the main gear
   echo "$OPENSHIFT_MYSQL_DB_HOST" > $OPENSHIFT_MYSQL_DIR/env/DB_HOST
@@ -49,7 +88,20 @@ else
   echo "$OPENSHIFT_MYSQL_DB_PROXY_PORT" > $OPENSHIFT_MYSQL_DIR/env/DB_PORT
 fi
 
-# Output result
-client_result "MySQL ${2} installed."
-client_result "The initial root password will be set to 'root', make sure to change it!"
-client_result "Use \$DB_HOST and \$DB_PORT environment variables to connect your application."
+client_result ""
+client_result "Percona Server/MySQL ${version} database added.  Please make note of these credentials:"
+client_result ""
+client_result "       Root User: $username"
+client_result "   Root Password: $password"
+client_result "   Database Name: $OPENSHIFT_APP_NAME"
+client_result ""
+
+client_result 'Connection URL: mysql://$OPENSHIFT_MYSQL_DB_HOST:$OPENSHIFT_MYSQL_DB_PORT/'
+client_result ""
+client_result "You can manage your new Percona Server/MySQL database by also embedding phpmyadmin."
+client_result "The phpmyadmin username and password will be the same as the Percona Server/MySQL credentials above."
+
+cart_props 'connection_url=mysql://$OPENSHIFT_MYSQL_DB_HOST:$OPENSHIFT_MYSQL_DB_PORT/'
+cart_props "username=$username"
+cart_props "password=$password"
+cart_props "database_name=$OPENSHIFT_APP_NAME"

@@ -1,0 +1,78 @@
+# WARNING: Changes to this file will be lost on every restart/upgrade.  Configurable values can be set with environment variables through rhc env set...
+#
+# Ex: rhc env set OPENSHIFT_MYSQL_LOWER_CASE_TABLE_NAMES=1 -a myapp && rhc cartridge restart -c percona-5.7 -a myapp
+#
+# Configurable Values:
+# lower_case_table_names -> OPENSHIFT_MYSQL_LOWER_CASE_TABLE_NAMES
+# default-storage-engine -> OPENSHIFT_MYSQL_DEFAULT_STORAGE_ENGINE
+# max_connections -> OPENSHIFT_MYSQL_MAX_CONNECTIONS
+# ft_min_word_len -> OPENSHIFT_MYSQL_FT_MIN_WORD_LEN
+# ft_max_word_len -> OPENSHIFT_MYSQL_FT_MAX_WORD_LEN
+# max_allowed_packet -> OPENSHIFT_MYSQL_MAX_ALLOWED_PACKET
+# table_open_cache -> OPENSHIFT_MYSQL_TABLE_OPEN_CACHE
+# sort_buffer_size -> OPENSHIFT_MYSQL_SORT_BUFFER_SIZE
+
+[mysqld]
+datadir=<%= ENV['OPENSHIFT_MYSQL_DIR'] %>data/
+socket=<%= ENV['OPENSHIFT_MYSQL_DB_SOCKET'] %>
+pid-file=<%= ENV['OPENSHIFT_MYSQL_DIR'] %>pid/mysql.pid
+# Disable reverse DNS resolving of gear ip BZ#1051348
+skip-name-resolve
+bind-address=<%= ENV['OPENSHIFT_MYSQL_DB_HOST'] %>
+# Disabling symbolic-links is recommended to prevent assorted security risks
+symbolic-links=0
+<% if ENV['OPENSHIFT_MYSQL_IDENT'] =~ /:5\.7:/ %>
+# In case AIO subsystem failed to start, users can set the
+# OPENSHIFT_MYSQL_AIO environment variable to '0' to disable it
+# See: http://help.directadmin.com/item.php?id=529
+innodb_use_native_aio = <%= ENV['OPENSHIFT_MYSQL_AIO'] || '1'%>
+<% end %>
+key_buffer_size = <%= ENV['OPENSHIFT_APP_DNS'] == ENV['OPENSHIFT_GEAR_DNS'] ? '32' : (ENV['OPENSHIFT_GEAR_MEMORY_MB'].to_i * 0.1).to_i %>M
+max_allowed_packet = <%= ENV['OPENSHIFT_MYSQL_MAX_ALLOWED_PACKET'] ? ENV['OPENSHIFT_MYSQL_MAX_ALLOWED_PACKET'] : '200M' %>
+table_open_cache = <%= ENV['OPENSHIFT_MYSQL_TABLE_OPEN_CACHE'] ? ENV['OPENSHIFT_MYSQL_TABLE_OPEN_CACHE'] : '4' %>
+sort_buffer_size = <%= ENV['OPENSHIFT_MYSQL_SORT_BUFFER_SIZE'] ? ENV['OPENSHIFT_MYSQL_SORT_BUFFER_SIZE'] : '256K' %>
+read_buffer_size = <%= ENV['OPENSHIFT_APP_DNS'] == ENV['OPENSHIFT_GEAR_DNS'] ? '8' : (ENV['OPENSHIFT_GEAR_MEMORY_MB'].to_i * 0.05).to_i %>M
+read_rnd_buffer_size = 256K
+net_buffer_length = 2K
+thread_stack = 256K
+lower_case_table_names = <%= ENV['OPENSHIFT_MYSQL_LOWER_CASE_TABLE_NAMES'] ? ENV['OPENSHIFT_MYSQL_LOWER_CASE_TABLE_NAMES'] : '0' %>
+<%= ENV['OPENSHIFT_MYSQL_MAX_CONNECTIONS'] ? "max_connections = #{ENV['OPENSHIFT_MYSQL_MAX_CONNECTIONS']}" : '' %>
+<%= ENV['OPENSHIFT_MYSQL_FT_MIN_WORD_LEN'] ? "ft_min_word_len = #{ENV['OPENSHIFT_MYSQL_FT_MIN_WORD_LEN']}" : '' %>
+<%= ENV['OPENSHIFT_MYSQL_FT_MAX_WORD_LEN'] ? "ft_max_word_len = #{ENV['OPENSHIFT_MYSQL_FT_MAX_WORD_LEN']}" : '' %>
+
+<%= ENV['OPENSHIFT_MYSQL_DEFAULT_STORAGE_ENGINE'] ? "default-storage-engine = #{ENV['OPENSHIFT_MYSQL_DEFAULT_STORAGE_ENGINE']}" : '' %>
+myisam_sort_buffer_size = 2M
+
+<%= ENV['OPENSHIFT_MYSQL_TIMEZONE'] ? "default-time-zone = '#{ENV['OPENSHIFT_MYSQL_TIMEZONE']}'" : '' %>
+
+#INNODB
+# You can set .._buffer_pool_size up to 50 - 80 %
+# of RAM but beware of setting memory usage too high
+innodb_buffer_pool_size = <%= ENV['OPENSHIFT_APP_DNS'] == ENV['OPENSHIFT_GEAR_DNS'] ? 32 : (ENV['OPENSHIFT_GEAR_MEMORY_MB'].to_i * 0.5).to_i %>M
+# Set .._log_file_size to 25 % of buffer pool size
+innodb_log_file_size = <%= ENV['OPENSHIFT_APP_DNS'] == ENV['OPENSHIFT_GEAR_DNS'] ? 16 : (ENV['OPENSHIFT_GEAR_MEMORY_MB'].to_i * 0.15).to_i %>M
+innodb_log_buffer_size = <%= ENV['OPENSHIFT_APP_DNS'] == ENV['OPENSHIFT_GEAR_DNS'] ? 16 : (ENV['OPENSHIFT_GEAR_MEMORY_MB'].to_i * 0.15).to_i %>M
+innodb_flush_log_at_trx_commit = 1
+innodb_lock_wait_timeout = 50
+innodb_file_per_table = 1
+
+[mysqld_safe]
+pid-file=<%= ENV['OPENSHIFT_MYSQL_DIR'] %>pid/mysql.pid
+
+[mysqldump]
+quick
+max_allowed_packet = 16M
+
+[mysql]
+no-auto-rehash
+# Remove the next comment character if you are not familiar with SQL
+#safe-updates
+
+[myisamchk]
+key_buffer_size = 8M
+sort_buffer_size = 8M
+<%= ENV['OPENSHIFT_MYSQL_FT_MIN_WORD_LEN'] ? "ft_min_word_len = #{ENV['OPENSHIFT_MYSQL_FT_MIN_WORD_LEN']}" : '' %>
+<%= ENV['OPENSHIFT_MYSQL_FT_MAX_WORD_LEN'] ? "ft_max_word_len = #{ENV['OPENSHIFT_MYSQL_FT_MAX_WORD_LEN']}" : '' %>
+
+[mysqlhotcopy]
+interactive-timeout

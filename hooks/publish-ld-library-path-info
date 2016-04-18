@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# For SCL based carts we need publish LD_LIBRARY_PATH
+# to web framework, so application can find the correct versions
+# of client libraries.
+#
+#
+source "${OPENSHIFT_MYSQL_DIR}/lib/mysql_context"
+
+#if [[ "$(mysql_version)" == "5.5" ]]; then
+#  ld_path=$(LD_LIBRARY_PATH="" scl enable mysql55 "printenv LD_LIBRARY_PATH")
+#  path=$(PATH="" /usr/bin/scl enable mysql55 "/usr/bin/printenv PATH")
+#  echo "OPENSHIFT_MYSQL_LD_LIBRARY_PATH_ELEMENT=${ld_path}"
+#  echo "OPENSHIFT_MYSQL_PATH_ELEMENT=${path}"
+#fi
+case "$(mysql_version)" in
+  5.7|5.7.*)
+    ld_path=$(LD_LIBRARY_PATH="${OPENSHIFT_DATA_DIR}.mysql/usr/lib" printenv LD_LIBRARY_PATH)
+    path=$(PATH="${OPENSHIFT_DATA_DIR}.mysql/usr/bin" /usr/bin/printenv PATH")
+    dirname $(PATH="${OPENSHIFT_DATA_DIR}.mysql/usr/bin:$PATH" which mysql)
+    echo "OPENSHIFT_MYSQL_LD_LIBRARY_PATH_ELEMENT=${ld_path}"
+    echo "OPENSHIFT_MYSQL_PATH_ELEMENT=${path}"
+    ;;
+esac

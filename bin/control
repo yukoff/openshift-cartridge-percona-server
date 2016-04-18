@@ -1,80 +1,290 @@
 #!/bin/bash
 
 source $OPENSHIFT_CARTRIDGE_SDK_BASH
+source "${OPENSHIFT_MYSQL_DIR}/lib/mysql_context"
 
-function is_running() {
-  if [ ! -z "$(ps -ef | grep 'mysqld' | grep -v grep)" ]; then
-    return 0
-  else
-    return 1
-  fi
+export OPENSHIFT_MYSQL_VERSION=$(mysql_version)
+
+start_timeout=45
+stop_timeout=30
+if [[ "${OPENSHIFT_MYSQL_START_TIMEOUT:-}" =~ ^[0-9]+$ ]] ; then
+    start_timeout="${OPENSHIFT_MYSQL_START_TIMEOUT}"
+fi
+if [[ "${OPENSHIFT_MYSQL_STOP_TIMEOUT:-}" =~ ^[0-9]+$ ]] ; then
+    stop_timeout="${OPENSHIFT_MYSQL_STOP_TIMEOUT}"
+fi
+
+# Run mysql commands
+function run_sql {
+  echo "$@" | mysql_context "/usr/bin/mysql -h $OPENSHIFT_MYSQL_DB_HOST -P $OPENSHIFT_MYSQL_DB_PORT -u $OPENSHIFT_MYSQL_DB_USERNAME --password='$OPENSHIFT_MYSQL_DB_PASSWORD' --skip-column-names"
 }
 
-function start() {
-  if is_running; then
-    client_result 'MySQL is already running.'
-  else
-    client_message 'Starting MySQL...'
-    nohup ${OPENSHIFT_DATA_DIR}.mysql/bin/mysqld --defaults-file=${OPENSHIFT_DATA_DIR}.mysql/my.cnf &
-    i=0
-    while ! is_running && [ $i -lt 60 ]; do
-      sleep 1
-      i=$(($i + 1))
-    done
-    if is_running; then
-      client_result 'MySQL started.'
-    else
-      client_result 'Warning! Could not start MySQL!'
-      exit 1
+function is_running {
+  pidfile=$OPENSHIFT_MYSQL_DIR/pid/mysql.pid
+
+  if [ -f $pidfile ]; then
+    mysql_pid=`cat $pidfile 2> /dev/null`
+    myid=`id -u`
+
+    if `ps --pid $mysql_pid > /dev/null 2>&1` || `pgrep -x mysqld -u $myid > /dev/null 2>&1`
+    then
+      return 0
     fi
   fi
+
+  return 1
 }
 
-function stop() {
+# TODO: account for standalone scenario
+# TODO: source user hooks?
+# Start mysqld and block until it comes up.
+function start {
   if ! is_running; then
-      client_result 'MySQL is already stopped.'
+    echo "Starting Percona Server ${OPENSHIFT_MYSQL_VERSION} cartridge"
+    oo-erb ${OPENSHIFT_MYSQL_DIR}conf/my.cnf.erb.hidden > ${OPENSHIFT_MYSQL_DIR}conf/my.cnf
+    local mysql_base_dir="${OPENSHIFT_DATA_DIR}.mysql"
+    #local mysqldsafe_ledir="${OPENSHIFT_DATA_DIR}.mysql/usr/bin"
+    #mysql_context "/usr/bin/mysqld_safe --defaults-file=$OPENSHIFT_MYSQL_DIR/conf/my.cnf --ledir=${mysqldsafe_ledir} --log-error=$OPENSHIFT_MYSQL_DIR/stdout.err |& /usr/bin/logshifter -tag mysql" &
+    #nohup ${OPENSHIFT_DATA_DIR}.mysql/usr/bin/mysqld --defaults-file=${OPENSHIFT_MYSQL_DIR}conf/my.cnf --log-error=${OPENSHIFT_MYSQL_DIR}stdout.err |& /usr/bin/logshifter -tag mysql &
+    nohup ${OPENSHIFT_DATA_DIR}.mysql/usr/bin/mysqld --defaults-file=${OPENSHIFT_MYSQL_DIR}conf/my.cnf --basedir=${mysql_base_dir} |& /usr/bin/logshifter -tag mysql &
+    wait_for_mysqld_availability
   else
-    client_message 'Stopping MySQL...'
-    kill "$(ps -ef | grep 'mysqld' | grep -v grep | awk '{ print $2 }')" > /dev/null 2>&1
-    i=0
-    while is_running && [ $i -lt 60 ]; do
-      sleep 1
-      i=$(($i + 1))
-    done
+    echo "Percona Server already running" 1>&2
+  fi
+}
+
+function wait_for_mysqld_availability {
+  test_select=${1:-false}
+
+  for (( i=1 ; i<=$start_timeout ; i++ )) ; do
     if is_running; then
-      client_result 'Warning! Could not stop MySQL!'
-      exit 1
+      if $test_select; then
+        run_sql 'select 1' 2> /dev/null && return 0
+      else
+        return 0
+      fi
+    fi
+
+    sleep 1
+  done
+
+  # If the mysql fails to start, notify user to check the log file
+  # (mysql.log) to see the errors.
+
+  echo "Percona Server failed to start."
+  echo "Please check $OPENSHIFT_LOG_DIR/mysql.log for errors."
+  echo "Recent log messages:"
+  echo "--------------------"
+  tail $OPENSHIFT_LOG_DIR/mysql.log
+  echo "--------------------"
+  exit 1
+}
+
+function stop {
+  if is_running; then
+    pidfile=$OPENSHIFT_MYSQL_DIR/pid/mysql.pid
+
+    if [ -f $pidfile ]; then
+      echo "Stopping Percona Server ${OPENSHIFT_MYSQL_VERSION} cartridge"
+      pid=$( /bin/cat $pidfile )
+      /bin/kill $pid
+      ret=$?
+      if [ $ret -eq 0 ]; then
+        TIMEOUT="${stop_timeout}"
+        while [[ "${TIMEOUT}" > 0 && -f "${pidfile}" ]]
+        do
+          /bin/kill -0 "${pid}" >/dev/null 2>&1 || break
+          sleep 1
+          (( TIMEOUT-=1 ))
+        done
+      fi
     else
-      client_result 'MySQL stopped.'
+      if `pgrep -x mysqld_safe > /dev/null 2>&1`; then
+        echo "Warning: Percona Server process exists without a pid file.  Use force-stop to kill." 1>&2
+      else
+          echo "Percona Server already stopped" 1>&2
+      fi
     fi
   fi
 }
 
-function restart() {
-  stop
-  start
+function status {
+  if is_running; then
+    client_result "Percona Server is running"
+  else
+    client_result "Percona Server is stopped"
+  fi
+
+  exit 0
 }
 
-function status() {
-  if is_running; then
-    client_result 'MySQL appears to be running.'
+function pre_snapshot {
+  start
+  # The following call is necessary due to race conditions that can arise if mysql
+  # is recovering from a force-stop
+  wait_for_mysqld_availability true
+
+  echo "$OPENSHIFT_MYSQL_DB_USERNAME" > $OPENSHIFT_DATA_DIR/mysql_db_username
+  echo "$OPENSHIFT_MYSQL_DB_HOST" > $OPENSHIFT_DATA_DIR/mysql_db_host
+  echo "$OPENSHIFT_APP_NAME" > $OPENSHIFT_DATA_DIR/mysql_db_dbname
+
+  dump_file=$OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz
+  local db_host=$OPENSHIFT_MYSQL_DB_HOST
+  local db_port=$OPENSHIFT_MYSQL_DB_PORT
+
+  {
+    mysql_context "/usr/bin/mysqldump --extended-insert --quick -h $db_host -P $db_port -u $OPENSHIFT_MYSQL_DB_USERNAME --password='$OPENSHIFT_MYSQL_DB_PASSWORD' --all-databases --events --triggers --routines --add-drop-table" | /bin/gzip > $dump_file
+  } ||
+  {
+    warning "Couldn't not dump mysql! Continuing anyway"
+    /bin/rm -rf $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz
+  }
+
+  if ! [ -s $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz ]; then
+    warning "Insufficient disk space to dump mysql! Continuing anyway"
+    /bin/rm -rf $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz
+  fi
+
+  stop
+}
+
+function post_snapshot {
+  true
+}
+
+function pre_restore {
+  cleanup_dump
+}
+
+function post_restore {
+  # Ensure a snapshot file exists
+  if [ -f $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz ]; then
+    start
+
+    # The following call is necessary due to race conditions that can arise if mysql
+    # is recovering from a force-stop
+    wait_for_mysqld_availability true
+
+    # Restore stashed variables and get current variables
+    OLD_IP=$(< $OPENSHIFT_DATA_DIR/mysql_db_host)
+    NEW_IP=$OPENSHIFT_MYSQL_DB_HOST
+    OLD_NAME=$(< $OPENSHIFT_DATA_DIR/mysql_db_dbname)
+    NEW_NAME=$OPENSHIFT_APP_NAME
+
+    if [ -s $OPENSHIFT_DATA_DIR/mysql_db_username ]; then
+      OLD_USER=$(< $OPENSHIFT_DATA_DIR/mysql_db_username)
+    else
+      OLD_USER="admin"
+    fi
+    NEW_USER=$OPENSHIFT_MYSQL_DB_USERNAME
+
+    # Drop and recreate current database
+    # Need to use backticks here to make sure name is properly escaped
+    run_sql "DROP DATABASE IF EXISTS \`$NEW_NAME\`;" || error "Could not drop existing database" 187
+    run_sql "CREATE DATABASE \`$NEW_NAME\`;" || error "Could not create database" 187
+
+    # Restore the old database verbatim, this will be using the old database name
+    # Pipe this command directly to mysql instead of using run_sql so that we don't have to create a massive string to hold the sql dump file
+    # TODO: Ideally this would pipe directly into run_sql, but I have yet to get it to work
+    {
+      (
+        echo "SET AUTOCOMMIT=0;"
+        echo "SET UNIQUE_CHECKS=0;"
+        echo "SET FOREIGN_KEY_CHECKS=0;"
+        /bin/zcat $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz
+        echo "SET FOREIGN_KEY_CHECKS=1;"
+        echo "SET UNIQUE_CHECKS=1;"
+        echo "SET AUTOCOMMIT=1;"
+        echo "COMMIT;"
+      ) | mysql_context "/usr/bin/mysql -h $OPENSHIFT_MYSQL_DB_HOST -P $OPENSHIFT_MYSQL_DB_PORT -u $OPENSHIFT_MYSQL_DB_USERNAME --password='$OPENSHIFT_MYSQL_DB_PASSWORD' --skip-column-names"
+    } || error "Could not import MySQL Database" 187
+
+
+    # Grant permissions to the current user
+    run_sql "
+    GRANT ALL ON *.* TO '$NEW_USER'@'$NEW_IP' IDENTIFIED BY '$OPENSHIFT_MYSQL_DB_PASSWORD' WITH GRANT OPTION;
+    GRANT ALL ON *.* TO '$NEW_USER'@'%' IDENTIFIED BY '$OPENSHIFT_MYSQL_DB_PASSWORD' WITH GRANT OPTION;
+    " || error "Could not grant permissions for MySQL database" 187
+
+    # Only run the following if the username is different
+    if [ "${OLD_USER}" != "${NEW_USER}" ]
+    then
+      # Remove the user from any grants that it has
+      {
+        for host in $(run_sql "SELECT Host from mysql.user WHERE user.user='${OLD_USER}'")
+        do
+          run_sql "DROP USER \`$OLD_USER\`@'${host}';" || warning "Could not drop old user" 187
+        done
+      }
+    fi
+
+    # Refresh the privileges
+    run_sql "FLUSH PRIVILEGES;" || error "Could not flush privileges" 187
+
+    # Only run the following if the database name has changed
+    if [ "${OLD_NAME}" == "${NEW_NAME}" ]
+    then
+      warning "Old and new names are the same, no need to rename"
+    else
+      # Dump the old database and restore it into the new database
+      # This approach provides relational consistency and will work with tables, views, triggers, etc
+      # TODO: This may not work if the user created another database that has references to this database
+      {
+        mysql_context "/usr/bin/mysqldump -h $NEW_IP -P $OPENSHIFT_MYSQL_DB_PORT -u $NEW_USER --password='$OPENSHIFT_MYSQL_DB_PASSWORD' $OLD_NAME" | \
+          mysql_context "/usr/bin/mysql -h $NEW_IP -P $OPENSHIFT_MYSQL_DB_PORT -u $NEW_USER --password='$OPENSHIFT_MYSQL_DB_PASSWORD' $NEW_NAME"
+      } || error "Could not rename database" 187
+
+      # Drop the old database now that the data has been preserved
+      run_sql "DROP DATABASE \`$OLD_NAME\`;" || error "Could not drop old database" 187
+    fi
+
+    cleanup_dump
+    stop
   else
-    client_result 'MySQL appears to be stopped.'
+    echo "MySQL restore attempted but no dump found!" 1>&2
+    echo "$OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz does not exist" 1>&2
   fi
 }
 
-function tidy() {
-  shopt -s dotglob
-  client_message "Emptying logs in ${OPENSHIFT_LOG_DIR}..."
-  rm -rf ${OPENSHIFT_LOG_DIR}/*.log*
-  client_message 'Done.'
+function cleanup_dump {
+  rm -f $OPENSHIFT_DATA_DIR/mysql_dump_snapshot.gz
+  rm -f $OPENSHIFT_DATA_DIR/mysql_db_host
+  rm -f $OPENSHIFT_DATA_DIR/mysql_db_username
+  rm -f $OPENSHIFT_DATA_DIR/mysql_db_dbname
 }
 
-case ${1} in
-  start)   start   ;;
-  stop)    stop    ;;
-  restart) restart ;;
-  status)  status  ;;
-  tidy)    tidy    ;;
-  *)       exit 0
+# Clean up any log files
+function tidy() {
+  client_message "Deleting mysql logs from $OPENSHIFT_LOG_DIR"
+  shopt -s dotglob
+  rm -rf $OPENSHIFT_LOG_DIR/mysql.log*
+}
+
+case "$1" in
+  start)
+    start
+  ;;
+  stop)
+    stop
+  ;;
+  status)
+    status
+  ;;
+  restart)
+    stop
+    start
+  ;;
+  pre-snapshot)
+    pre_snapshot
+  ;;
+  post-snapshot)
+    post_snapshot
+  ;;
+  pre-restore)
+    pre_restore
+  ;;
+  post-restore)
+    post_restore
+  ;;
+  tidy)          tidy ;;
 esac
