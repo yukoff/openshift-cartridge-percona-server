@@ -1,3 +1,4 @@
+[![Stories in Ready](https://badge.waffle.io/yukoff/openshift-cartridge-percona-server.png?label=ready&title=Ready)](https://waffle.io/yukoff/openshift-cartridge-percona-server)
 # Percona Server cartridge for OpenShift (custom)
 
 ![percona-server](http://imgh.us/percona-server-logo.png) ![openshift](http://imgh.us/openshift-logo.png)
