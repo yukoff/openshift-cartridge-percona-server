@@ -1,16 +1,16 @@
 ---
 Name: percona
 Description: Percona Server is a branch of MySQL bringing higher performance, reliability and more features.
-Version: '5.7.11'
+Version: '5.7.15'
 Versions:
 - '5.7'
-- '5.7.11'
+- '5.7.15'
 License: GPL
 Vendor: Percona
 Website: http://www.percona.com/software/percona-server/
-Display-Name: Percona Server 5.7.11
+Display-Name: Percona Server 5.7.15
 Cartridge-Short-Name: MYSQL
-Cartridge-Version: '0.1.0'
+Cartridge-Version: '0.1.15'
 Cartridge-Vendor: yukoff
 Categories:
 - service

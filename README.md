@@ -2,7 +2,7 @@
 
 ![percona-server](http://imgh.us/percona-server-logo.png) ![openshift](http://imgh.us/openshift-logo.png)
 
-This is a custom OpenShift cartridge providing the latest Percona Server version (5.7.11 as of April 18th 2016).
+This is a custom OpenShift cartridge providing the latest Percona Server version (5.7.15 as of October 10th 2016).
 
 ## Why
 
