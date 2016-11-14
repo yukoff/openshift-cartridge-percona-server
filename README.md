@@ -67,7 +67,7 @@ var knex = require('knex')({
 
 - There's no guarantee this cartridge is production-ready. Some people use it though (on **their own responsibility**).
 - This is a **lean cartridge**. A standard MySQL installation takes a huge amount of space (over 1.5GB for MySQL 5.7.5). To save space, just the necessary MySQL binaries are installed.
-- [TODO] In order to avoid an OpenShift configuration conflict, **the server instance is listening on 13306 instead of the standard MySQL port 3306**.
+- ~~[FIXME] In order to avoid an OpenShift configuration conflict, **the server instance is listening on 13306 instead of the standard MySQL port 3306**.~~ Should be complete drop-in replacement for standard OpenShift's MySQL cartridge.
 - Don't hesitate to make a pull-request with an updated version in [this file](https://github.com/yukoff/openshift-cartridge-percona-server/blob/master/metadata/manifest.yml#L4) if you notice this cartridge version is behind the latest [Percona Server release](https://www.percona.com/downloads/Percona-Server-5.7/LATEST).
 - **Don't open issues in this repository to ask questions about `rhc port-forward`**. Please refer to the [OpenShift documentation](https://developers.openshift.com/en/managing-port-forwarding.html) to learn about it. I am (and the author of the original mysql custom cartridge - @icflorescu) not an employee of RedHat / OpenShift, nor do we have any form of consultancy agreement with them and the fact that this cartridge was open-sourced doesn't mean either of contributors are willing to offer free advice on the subject. Pull-requests and suggestions are always welcome, though.
 
