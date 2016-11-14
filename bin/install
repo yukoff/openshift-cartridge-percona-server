@@ -28,16 +28,17 @@ rm ${OPENSHIFT_DATA_DIR}.mysql/usr
 ln -sf ${OPENSHIFT_DATA_DIR}.mysql/. ${OPENSHIFT_DATA_DIR}.mysql/usr
 
 # Copy just the necessary files
+TARBALL_DIR=Percona-Server-${version}-9-Linux.x86_64.ssl101
 #tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
 tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
-  Percona-Server-${version}-4-Linux.x86_64.ssl101/bin
-  #Percona-Server-${version}-4-Linux.x86_64.ssl101/bin/{mysql,mysqld,mysql_install_db,mysql_ssl_rsa_setup}
+  ${TARBALL_DIR}/bin
+  #${TARBALL_DIR}/bin/{mysql,mysqld,mysql_install_db,mysql_ssl_rsa_setup}
 #tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
 tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
-  Percona-Server-${version}-4-Linux.x86_64.ssl101/lib
+  ${TARBALL_DIR}/lib
 #tar -xvzf ${OPENSHIFT_DATA_DIR}tmp.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
 tar -xvzf /tmp/percona-server-${version}.tgz --strip-components=1 -C ${OPENSHIFT_DATA_DIR}.mysql \
-    Percona-Server-${version}-4-Linux.x86_64.ssl101/share
+  ${TARBALL_DIR}/share
 
 # Remove downloaded archive
 #rm ${OPENSHIFT_DATA_DIR}tmp.tgz
